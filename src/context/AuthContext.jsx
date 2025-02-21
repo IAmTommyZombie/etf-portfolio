@@ -1,49 +1,40 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 
-const AuthContext = createContext();
+const AuthContext = React.createContext();
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem("user");
-    return savedUser ? JSON.parse(savedUser) : null; // Restore user from localStorage
+    const storedUser = localStorage.getItem("user");
+    return storedUser ? JSON.parse(storedUser) : null;
   });
   const [lastActivity, setLastActivity] = useState(Date.now());
+  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001"; // Use env variable
 
-  // Persist user to localStorage on change
   useEffect(() => {
-    if (user) {
-      localStorage.setItem("user", JSON.stringify(user));
-    } else {
-      localStorage.removeItem("user");
-    }
+    user
+      ? localStorage.setItem("user", JSON.stringify(user))
+      : localStorage.removeItem("user");
   }, [user]);
 
-  // Inactivity timeout (10 minutes = 600,000 ms)
   useEffect(() => {
-    const checkInactivity = () => {
-      if (Date.now() - lastActivity > 600000 && user) {
-        logout();
-      }
-    };
-
-    const interval = setInterval(checkInactivity, 60000); // Check every minute
-    const resetTimer = () => setLastActivity(Date.now());
-
-    window.addEventListener("mousemove", resetTimer);
-    window.addEventListener("keydown", resetTimer);
-    window.addEventListener("click", resetTimer);
-
+    const interval = setInterval(() => {
+      if (Date.now() - lastActivity > 600000 && user) logout();
+    }, 60000);
+    const updateActivity = () => setLastActivity(Date.now());
+    window.addEventListener("mousemove", updateActivity);
+    window.addEventListener("keydown", updateActivity);
+    window.addEventListener("click", updateActivity);
     return () => {
       clearInterval(interval);
-      window.removeEventListener("mousemove", resetTimer);
-      window.removeEventListener("keydown", resetTimer);
-      window.removeEventListener("click", resetTimer);
+      window.removeEventListener("mousemove", updateActivity);
+      window.removeEventListener("keydown", updateActivity);
+      window.removeEventListener("click", updateActivity);
     };
   }, [user, lastActivity]);
 
   const login = async (username, password) => {
     try {
-      const response = await fetch("http://localhost:3001/api/login", {
+      const response = await fetch(`${API_URL}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -62,7 +53,7 @@ export const AuthProvider = ({ children }) => {
 
   const signup = async (username, password) => {
     try {
-      const response = await fetch("http://localhost:3001/api/signup", {
+      const response = await fetch(`${API_URL}/api/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -93,4 +84,4 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => React.useContext(AuthContext);
