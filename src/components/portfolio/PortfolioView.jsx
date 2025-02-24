@@ -51,6 +51,9 @@ const PortfolioView = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [selectedETF, setSelectedETF] = useState(null);
+  const [selectedYear, setSelectedYear] = useState(
+    new Date().getFullYear().toString()
+  );
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -70,6 +73,7 @@ const PortfolioView = () => {
       if (!portfolioResponse.ok)
         throw new Error("Failed to fetch portfolio data");
       const portfolioData = await portfolioResponse.json();
+      console.log("Raw portfolio data:", portfolioData);
       setPortfolio(portfolioData || []);
 
       const distResponse = await fetch(
@@ -165,59 +169,52 @@ const PortfolioView = () => {
 
   const groupByMonthWithCarryover = () => {
     const months = {};
-    const tickerTotals = {};
     const sortedPortfolio = [...portfolio].sort(
       (a, b) => new Date(a.purchaseDate) - new Date(b.purchaseDate)
     );
 
-    // Find earliest month and extend to today
-    const earliestDate =
-      sortedPortfolio.length > 0
-        ? new Date(sortedPortfolio[0].purchaseDate)
-        : new Date();
-    const today = new Date();
-    let current = new Date(earliestDate);
-    while (current <= today) {
-      const monthYear = current.toLocaleString("default", {
+    // Aggregate shares by month and ticker
+    sortedPortfolio.forEach((etf) => {
+      const purchaseDate = new Date(etf.purchaseDate);
+      if (purchaseDate < new Date("2023-01-01")) return;
+
+      const monthYear = purchaseDate.toLocaleString("default", {
         month: "long",
         year: "numeric",
       });
-      months[monthYear] = [];
-      current.setMonth(current.getMonth() + 1);
-    }
+      if (!months[monthYear]) months[monthYear] = {};
 
-    // Build cumulative totals per month
-    const monthKeys = Object.keys(months).sort(
-      (a, b) => new Date(a) - new Date(b)
-    );
-    monthKeys.forEach((monthYear) => {
-      const monthEnd = new Date(monthYear + " 1");
-      monthEnd.setMonth(monthEnd.getMonth() + 1);
-
-      sortedPortfolio.forEach((etf) => {
-        if (new Date(etf.purchaseDate) <= monthEnd) {
-          if (!tickerTotals[etf.ticker]) {
-            tickerTotals[etf.ticker] = { ...etf, totalShares: 0 };
-          }
-          tickerTotals[etf.ticker].totalShares += etf.totalShares;
-          if (
-            !tickerTotals[etf.ticker].earliestPurchaseDate ||
-            new Date(etf.purchaseDate) <
-              new Date(tickerTotals[etf.ticker].earliestPurchaseDate)
-          ) {
-            tickerTotals[etf.ticker].earliestPurchaseDate = etf.purchaseDate;
-            tickerTotals[etf.ticker].purchasePrice = etf.purchasePrice;
-          }
-        }
-      });
-
-      months[monthYear] = Object.values(tickerTotals).filter(
-        (etf) =>
-          new Date(etf.earliestPurchaseDate || etf.purchaseDate) <= monthEnd
-      );
+      if (!months[monthYear][etf.ticker]) {
+        months[monthYear][etf.ticker] = { ...etf, totalShares: 0 };
+        months[monthYear][etf.ticker].earliestPurchaseDate = etf.purchaseDate;
+      }
+      months[monthYear][etf.ticker].totalShares += etf.totalShares;
     });
 
-    return months;
+    // Build result with cumulative totals
+    const result = {};
+    const allMonths = Object.keys(months).sort(
+      (a, b) => new Date(a) - new Date(b)
+    );
+    let runningTotals = {};
+
+    allMonths.forEach((monthYear) => {
+      const monthPurchases = months[monthYear];
+      Object.entries(monthPurchases).forEach(([ticker, etf]) => {
+        if (!runningTotals[ticker]) {
+          runningTotals[ticker] = { ...etf, totalShares: 0 };
+          runningTotals[ticker].earliestPurchaseDate = etf.purchaseDate;
+        }
+        runningTotals[ticker].totalShares += etf.totalShares;
+        runningTotals[ticker].purchasePrice = etf.purchasePrice; // Latest price for simplicity
+      });
+      result[monthYear] = Object.values(runningTotals).map((etf) => ({
+        ...etf,
+      }));
+    });
+
+    console.log("Grouped Portfolio:", result);
+    return result;
   };
 
   const calculateMonthTotals = (etfs) => {
@@ -227,7 +224,7 @@ const PortfolioView = () => {
     );
     const totalIncome = etfs.reduce((acc, etf) => {
       const distAmount = getLatestDistributionAmount(etf.ticker);
-      return acc + distAmount * etf.totalShares; // Monthly income only
+      return acc + distAmount * etf.totalShares;
     }, 0);
     return { totalValue, totalIncome };
   };
@@ -241,11 +238,10 @@ const PortfolioView = () => {
     Object.values(groupedPortfolio).forEach((etfs) => {
       const { totalValue: monthValue, totalIncome: monthIncome } =
         calculateMonthTotals(etfs);
-      totalAnnualIncome += monthIncome; // Sum monthly incomes
-      totalShares = etfs.reduce((acc, etf) => acc + etf.totalShares, 0); // Latest month's total shares
+      totalAnnualIncome += monthIncome;
+      totalShares = etfs.reduce((acc, etf) => acc + etf.totalShares, 0);
     });
 
-    // Portfolio Value is current value of latest holdings
     totalValue =
       Object.values(groupedPortfolio)
         .slice(-1)[0]
@@ -263,6 +259,11 @@ const PortfolioView = () => {
   const formatCurrency = (value) => `$${value.toFixed(2)}`;
 
   const groupedPortfolio = groupByMonthWithCarryover();
+
+  const years = ["2023", "2024", "2025"];
+  const filteredPortfolio = Object.entries(groupedPortfolio).filter(
+    ([monthYear]) => monthYear.includes(selectedYear)
+  );
 
   const renderTableHeader = () => (
     <thead className="bg-gray-50">
@@ -427,6 +428,21 @@ const PortfolioView = () => {
               Add New ETF
             </button>
           </div>
+          <div className="flex space-x-4 mt-4">
+            {years.map((year) => (
+              <button
+                key={year}
+                onClick={() => setSelectedYear(year)}
+                className={`px-4 py-2 text-sm font-medium rounded-md ${
+                  selectedYear === year
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}
+              >
+                {year}
+              </button>
+            ))}
+          </div>
         </div>
         {loading ? (
           <div className="bg-white p-8 rounded-lg shadow-lg flex items-center justify-center">
@@ -446,7 +462,7 @@ const PortfolioView = () => {
             </p>
           </div>
         ) : (
-          Object.entries(groupedPortfolio).map(([monthYear, etfs]) => {
+          filteredPortfolio.map(([monthYear, etfs]) => {
             const { totalValue: monthValue, totalIncome: monthIncome } =
               calculateMonthTotals(etfs);
             return (
